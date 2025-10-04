@@ -1,13 +1,16 @@
 import express from 'express';
-import db from '../db.js';
+import { PrismaClient } from '../generated/prisma/index.js';
+
 
 const router = express.Router();
+const prisma = new PrismaClient();
 
 // Get all todos for authenticated user
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
     try {
-        const getTodos = db.prepare('SELECT * FROM todos WHERE user_id = ?');
-        const todos = getTodos.all([req.userId]);
+        const todos = await prisma.todo.findMany({
+            where: { userId: req.userId }
+        });
         
         res.json(todos);
     } catch (error) {
@@ -19,7 +22,7 @@ router.get('/', (req, res) => {
 });
 
 // Add a new todo
-router.post('/', (req, res) => {
+router.post('/',async (req, res) => {
     try {
         const { task } = req.body;
         
@@ -29,13 +32,18 @@ router.post('/', (req, res) => {
             });
         }
         
-        const insertTodo = db.prepare('INSERT INTO todos (user_id, task) VALUES (?, ?)');
-        const result = insertTodo.run([req.userId, task.trim()]);
+        const todo = await prisma.todo.create({
+            data: {
+                userId: req.userId,
+                task: task.trim(),
+                completed: false,
+            },
+        });
         
-        res.json({ 
-            id: result.lastInsertRowid,
-            task: task.trim(),
-            completed: false,
+       res.json({ 
+            id: todo.id,  // ← Fixed: use todo.id instead of result.lastInsertRowid
+            task: todo.task,
+            completed: todo.completed,
             message: 'Todo added successfully'
         });
     } catch (error) {
@@ -47,23 +55,22 @@ router.post('/', (req, res) => {
 });
 
 // Update a todo (mark as completed/incomplete)
-router.put('/:id', (req, res) => {
+router.put('/:id',async (req, res) => {
     try {
         const { id } = req.params;
         const { completed } = req.body;
         
-        const updateTodo = db.prepare('UPDATE todos SET completed = ? WHERE id = ? AND user_id = ?');
-        const result = updateTodo.run([completed ? 1 : 0, id, req.userId]);
-        
-        if (result.changes === 0) {
-            return res.status(404).json({ 
-                error: 'Todo not found' 
-            });
-        }
-        
-        res.json({ 
-            message: 'Todo updated successfully' 
+        const updatedTodo = await prisma.todo.update({
+            where: {
+                id: parseInt(id),
+                userId: req.userId
+            },
+            data: {
+                completed: !!completed
+            },
         });
+        
+        res.json(updatedTodo);
     } catch (error) {
         console.error('Error updating todo:', error);
         res.status(500).json({ 
@@ -73,14 +80,18 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete a todo
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = req.userId;
+        const result = await prisma.todo.deleteMany({
+            where: {
+                id: parseInt(id),
+                userId: userId
+            },
+        });
         
-        const deleteTodo = db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?');
-        const result = deleteTodo.run([id, req.userId]);
-        
-        if (result.changes === 0) {
+        if (result.count === 0) {
             return res.status(404).json({ 
                 error: 'Todo not found' 
             });
